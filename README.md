@@ -1,4 +1,4 @@
-```markdown
+
 # Promotional Codes API
 
 Тестовый Django REST API проект для работы с:
@@ -45,7 +45,6 @@
 git clone <URL_репозитория>
 cd promocodes
 ```
-
 ---
 
 ## 2. Установить Poetry
