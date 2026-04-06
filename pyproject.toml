@@ -1,0 +1,45 @@
+[project]
+name = "promotional-codes"
+version = "0.1.0"
+description = "Промокоды пользователей"
+authors = [
+    {name = "Nell9"}
+]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "django (==4.2)",
+    "python-dotenv (>=1.2.2,<2.0.0)",
+    "drf-yasg (>=1.21.15,<2.0.0)",
+    "djangorestframework (>=3.17.1,<4.0.0)"
+]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.15.9"
+black = "^26.3.1"
+isort = "^8.0.1"
+
+[tool.ruff]
+src = ["promocodes"]
+fix = true
+line-length = 88
+target-version = "py310"
+select = ["E", "F", "W", "C90", "B", "N"]
+ignore = ["E501"]  # длинные строки оставим Black
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+line_length = 88
+known_first_party = ["promocodes", "users", "goods"]
+
+[tool.poetry.scripts]
+format = "scripts.format:main"
