@@ -1,32 +1,30 @@
+from decimal import Decimal
+
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from goods.models import Good
 from .models import Order, OrderItem, PromoCode
+from .services import OrderService
 
 User = get_user_model()
 
 
 class OrderItemSerializer(serializers.ModelSerializer):
     """
-    Сериализатор для отдельной позиции заказа.
+    Сериализатор позиции заказа.
+
+    Используется для отображения товаров, входящих в заказ.
 
     Поля:
         good_id (int): Идентификатор товара.
+        quantity (int): Количество товара.
         price (Decimal): Цена за единицу товара.
-        discount (Decimal): Скидка, применённая к позиции.
+        discount (Decimal): Размер скидки для позиции.
         total (Decimal): Итоговая стоимость позиции с учётом скидки.
     """
-    good_id = serializers.IntegerField(source="good.id")
-    price = serializers.DecimalField(
-        source="price", max_digits=10, decimal_places=2
-    )
-    discount = serializers.DecimalField(
-        source="discount", max_digits=4, decimal_places=2
-    )
-    total = serializers.DecimalField(
-        source="total", max_digits=12, decimal_places=2
-    )
+
+    good_id = serializers.IntegerField(source="good.id", read_only=True)
 
     class Meta:
         model = OrderItem
@@ -35,32 +33,43 @@ class OrderItemSerializer(serializers.ModelSerializer):
 
 class OrderSerializer(serializers.ModelSerializer):
     """
-    Сериализатор заказа с поддержкой промокодов.
+    Сериализатор заказа.
 
-    Поля:
+    Отвечает за:
+    - валидацию входных данных;
+    - получение пользователя, товаров и промокода;
+    - передачу подготовленных данных в сервис создания заказа.
+
+    Входные поля:
         user_id (int): Идентификатор пользователя.
-        goods (list[dict]): Список товаров с полями 'good_id' и 'quantity'.
-        promo_code (str, optional): Код промокода.
-        items (list[OrderItemSerializer]): Список позиций заказа.
+        goods (list[dict]): Список товаров и их количества.
+        promo_code (str): Промокод, если он указан.
+
+    Выходные поля:
+        items (list): Список позиций заказа.
         price (Decimal): Общая стоимость заказа без скидки.
-        discount (Decimal): Суммарная скидка по заказу.
-        total (Decimal): Итоговая стоимость заказа с учётом скидки.
+        discount (Decimal): Общая сумма скидки.
+        total (Decimal): Итоговая стоимость заказа после скидки.
     """
-    user_id = serializers.IntegerField()
-    goods = serializers.ListField(
-        child=serializers.DictField(), write_only=True
-    )
-    promo_code = serializers.CharField(required=False, allow_blank=True)
+
+    user_id = serializers.IntegerField(write_only=True)
+    goods = serializers.ListField(child=serializers.DictField(), write_only=True)
+    promo_code = serializers.CharField(required=False, allow_blank=True, write_only=True)
+
     items = OrderItemSerializer(read_only=True, many=True)
     price = serializers.DecimalField(
-        max_digits=12, decimal_places=2, source="total_price", read_only=True
+        max_digits=12,
+        decimal_places=2,
+        source="total_price",
+        read_only=True,
     )
     discount = serializers.DecimalField(
-        max_digits=4, decimal_places=2, source="total_discount", read_only=True
+        max_digits=12,
+        decimal_places=2,
+        source="total_discount",
+        read_only=True,
     )
-    total = serializers.DecimalField(
-        max_digits=12, decimal_places=2, read_only=True
-    )
+    total = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Order
@@ -74,18 +83,30 @@ class OrderSerializer(serializers.ModelSerializer):
             "total",
         ]
 
-    def get_user(self, user_id):
+    def get_total(self, obj):
         """
-        Получение объекта пользователя по user_id.
+        Возвращает итоговую стоимость заказа после вычета скидки.
+
+        Args:
+            obj (Order): Объект заказа.
+
+        Returns:
+            Decimal: Итоговая сумма заказа.
+        """
+        return obj.total_price - obj.total_discount
+
+    def _get_user(self, user_id):
+        """
+        Получает пользователя по идентификатору.
 
         Args:
             user_id (int): Идентификатор пользователя.
 
         Returns:
-            User: Объект пользователя.
+            User: Найденный пользователь.
 
         Raises:
-            ValidationError: Если пользователь с указанным id не найден.
+            serializers.ValidationError: Если пользователь не найден.
         """
         try:
             return User.objects.get(id=user_id)
@@ -94,47 +115,93 @@ class OrderSerializer(serializers.ModelSerializer):
                 {"user_id": "Пользователь не найден"}
             ) from err
 
-    def get_goods_objects(self, goods_data):
+    def _get_good(self, good_id):
         """
-        Получение объектов товаров из данных запроса.
+        Получает товар по идентификатору.
 
         Args:
-            goods_data (list[dict]): Список словарей с 'good_id' и 'quantity'.
+            good_id (int): Идентификатор товара.
 
         Returns:
-            list[dict]: Список словарей с объектом Good и количеством.
+            Good: Найденный товар.
 
         Raises:
-            ValidationError: Если один из товаров не найден.
+            serializers.ValidationError: Если товар не найден.
         """
+        try:
+            return Good.objects.get(id=good_id)
+        except Good.DoesNotExist as err:
+            raise serializers.ValidationError(
+                {"goods": f"Товар с id {good_id} не найден"}
+            ) from err
+
+    def _get_goods_objects(self, goods_data):
+        """
+        Преобразует входной список товаров в список объектов Good с количеством.
+
+        Args:
+            goods_data (list[dict]): Список словарей вида:
+                {
+                    "good_id": int,
+                    "quantity": int
+                }
+
+        Returns:
+            list[dict]: Список словарей вида:
+                {
+                    "good": <Good>,
+                    "quantity": int
+                }
+
+        Raises:
+            serializers.ValidationError: Если формат данных неверный,
+            список товаров пустой или товар не найден.
+        """
+        if not goods_data:
+            raise serializers.ValidationError(
+                {"goods": "Список товаров не может быть пустым"}
+            )
+
         goods_objs = []
-        for g in goods_data:
-            try:
-                good = Good.objects.get(id=g["good_id"])
-                goods_objs.append({"good": good, "quantity": g["quantity"]})
-            except Good.DoesNotExist as err:
+
+        for item in goods_data:
+            if "good_id" not in item or "quantity" not in item:
                 raise serializers.ValidationError(
-                    {"goods": f"Товар с id {g['good_id']} не найден"}
-                ) from err
+                    {"goods": "Неверный формат данных товара"}
+                )
+
+            quantity = item["quantity"]
+            if not isinstance(quantity, int) or quantity <= 0:
+                raise serializers.ValidationError(
+                    {"goods": "Количество товара должно быть положительным целым числом"}
+                )
+
+            good = self._get_good(item["good_id"])
+            goods_objs.append({
+                "good": good,
+                "quantity": quantity,
+            })
+
         return goods_objs
 
-    def validate_promo_code(self, promo_code_str, user, goods_objs):
+    def _get_promo(self, promo_code_str, user, goods_objs):
         """
-        Валидация и применение промокода к заказу.
+        Получает и валидирует промокод.
 
         Args:
-            promo_code_str (str): Код промокода.
-            user (User): Пользователь, создающий заказ.
-            goods_objs (list[dict]): Список товаров с объектами Good и количеством.
+            promo_code_str (str | None): Строковое значение промокода.
+            user (User): Пользователь, оформляющий заказ.
+            goods_objs (list[dict]): Список товаров заказа.
 
         Returns:
-            tuple: (PromoCode или None, Decimal) — объект промокода и скидка.
+            tuple[PromoCode | None, Decimal]: Промокод и размер скидки.
 
         Raises:
-            ValidationError: Если промокод не существует или невалиден.
+            serializers.ValidationError: Если промокод не существует
+            или не подходит для заказа.
         """
         if not promo_code_str:
-            return None, 0
+            return None, Decimal("0.00")
 
         try:
             promo = PromoCode.objects.get(code=promo_code_str)
@@ -143,73 +210,52 @@ class OrderSerializer(serializers.ModelSerializer):
                 {"promo_code": "Промокод не существует"}
             ) from err
 
-        valid, msg = promo.is_valid(user, [g["good"] for g in goods_objs])
+        valid, msg = promo.is_valid(user, [item["good"] for item in goods_objs])
         if not valid:
             raise serializers.ValidationError({"promo_code": msg})
 
-        promo.used_count += 1
-        promo.save()
         return promo, promo.discount
 
-    def calculate_order_items(self, order, goods_objs, discount):
+    def validate(self, attrs):
         """
-        Создание позиций заказа и вычисление общей стоимости и скидки.
+        Выполняет кросс-полевую валидацию заказа.
+
+        Логика:
+        1. Получает пользователя.
+        2. Получает объекты товаров.
+        3. Получает и проверяет промокод.
+        4. Сохраняет подготовленные данные в attrs для метода create().
 
         Args:
-            order (Order): Созданный объект заказа.
-            goods_objs (list[dict]): Список товаров с объектами Good и количеством.
-            discount (Decimal): Скидка на заказ (например, 0.1 = 10%).
+            attrs (dict): Входные данные после базовой валидации полей.
 
         Returns:
-            tuple: (total_price, total_discount) — сумма цен и сумма скидки.
+            dict: Обновлённые атрибуты с подготовленными объектами.
         """
-        total_price = 0
-        total_discount = 0
+        user = self._get_user(attrs["user_id"])
+        goods_objs = self._get_goods_objects(attrs["goods"])
+        promo, discount = self._get_promo(attrs.get("promo_code"), user, goods_objs)
 
-        for g in goods_objs:
-            price = g["good"].price * g["quantity"]
-            disc = price * discount
-            total = price - disc
-
-            OrderItem.objects.create(
-                order=order,
-                good=g["good"],
-                quantity=g["quantity"],
-                price=g["good"].price,
-                discount=discount,
-                total=total,
-            )
-
-            total_price += price
-            total_discount += disc
-
-        return total_price, total_discount
+        attrs["validated_user"] = user
+        attrs["validated_goods"] = goods_objs
+        attrs["validated_promo"] = promo
+        attrs["validated_discount"] = discount
+        return attrs
 
     def create(self, validated_data):
         """
-        Создание заказа вместе с позициями и применением промокода.
+        Создаёт заказ через сервисный слой.
 
         Args:
-            validated_data (dict): Валидированные данные запроса.
+            validated_data (dict): Провалидированные данные заказа.
 
         Returns:
-            Order: Созданный объект заказа с позициями и скидкой.
+            Order: Созданный объект заказа.
         """
-        user = self.get_user(validated_data["user_id"])
-        goods_data = validated_data.pop("goods")
-        promo_code_str = validated_data.get("promo_code", None)
-
-        goods_objs = self.get_goods_objects(goods_data)
-        promo, discount = self.validate_promo_code(
-            promo_code_str, user, goods_objs
+        return OrderService.create_order(
+            user=validated_data["validated_user"],
+            goods_objs=validated_data["validated_goods"],
+            promo=validated_data["validated_promo"],
+            discount=validated_data["validated_discount"],
         )
-
-        order = Order.objects.create(user=user, promo_code=promo)
-        total_price, total_discount = self.calculate_order_items(
-            order, goods_objs, discount
-        )
-
-        order.total_price = total_price
-        order.total_discount = total_discount
-        order.save()
-        return order
+    

@@ -9,12 +9,13 @@ User = get_user_model()
 
 class TimeStampedModel(models.Model):
     """
-    Абстрактная модель для добавления полей временных меток.
+    Абстрактная модель, добавляющая поля временных меток для всех моделей.
 
     Поля:
         created_at (DateTimeField): Время создания записи.
         updated_at (DateTimeField): Время последнего обновления записи.
     """
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -24,18 +25,20 @@ class TimeStampedModel(models.Model):
 
 class PromoCode(TimeStampedModel):
     """
-    Модель промокода.
+    Модель промокода для применения скидок к товарам.
 
     Поля:
         code (CharField): Уникальный код промокода.
         discount (DecimalField): Скидка в виде десятичного числа (0.1 = 10%).
-        max_uses (PositiveIntegerField): Максимальное количество применений.
+        max_uses (PositiveIntegerField): Максимальное число применений промокода.
         used_count (PositiveIntegerField): Сколько раз промокод уже использован.
         expiry_date (DateTimeField): Дата и время окончания действия промокода.
-        allowed_categories (ManyToManyField): Категории товаров, к которым можно применять промокод.
+        allowed_categories (ManyToManyField): Категории товаров, к которым можно
+            применять промокод.
     """
+
     code = models.CharField(max_length=50, unique=True)
-    discount = models.DecimalField(max_digits=4, decimal_places=2)  # 0.1 = 10%
+    discount = models.DecimalField(max_digits=4, decimal_places=2)
     max_uses = models.PositiveIntegerField()
     used_count = models.PositiveIntegerField(default=0)
     expiry_date = models.DateTimeField()
@@ -43,7 +46,7 @@ class PromoCode(TimeStampedModel):
 
     def is_valid(self, user, goods):
         """
-        Проверка валидности промокода для конкретного пользователя и списка товаров.
+        Проверяет валидность промокода для пользователя и списка товаров.
 
         Args:
             user (User): Пользователь, который применяет промокод.
@@ -73,7 +76,8 @@ class PromoCode(TimeStampedModel):
 
 class Order(TimeStampedModel):
     """
-    Модель заказа.
+    Модель заказа, содержащего один или несколько товаров и опциональный
+    промокод.
 
     Поля:
         user (ForeignKey): Пользователь, создавший заказ.
@@ -81,14 +85,13 @@ class Order(TimeStampedModel):
         total_price (DecimalField): Общая стоимость заказа без скидки.
         total_discount (DecimalField): Общая сумма скидки по заказу.
     """
+
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     promo_code = models.ForeignKey(
         PromoCode, on_delete=models.SET_NULL, null=True, blank=True
     )
-    total_price = models.DecimalField(
-        max_digits=12, decimal_places=2, default=0)
-    total_discount = models.DecimalField(
-        max_digits=4, decimal_places=2, default=0)
+    total_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    total_discount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
 
     def __str__(self):
         return f"Order #{self.id} by {self.user}"
@@ -96,7 +99,7 @@ class Order(TimeStampedModel):
 
 class OrderItem(TimeStampedModel):
     """
-    Модель позиции заказа (отдельный товар в заказе).
+    Модель позиции заказа — отдельный товар, включённый в заказ.
 
     Поля:
         order (ForeignKey): Заказ, к которому относится позиция.
@@ -106,8 +109,8 @@ class OrderItem(TimeStampedModel):
         discount (DecimalField): Процент скидки, применённой к товару.
         total (DecimalField): Итоговая стоимость позиции с учётом скидки.
     """
-    order = models.ForeignKey(
-        Order, on_delete=models.CASCADE, related_name="items")
+
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="items")
     good = models.ForeignKey(Good, on_delete=models.CASCADE)
     quantity = models.PositiveIntegerField()
     price = models.DecimalField(max_digits=10, decimal_places=2)

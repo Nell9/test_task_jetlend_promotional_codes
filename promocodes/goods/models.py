@@ -3,8 +3,10 @@ from django.db import models
 
 class TimeStampedModel(models.Model):
     """
-    Абстрактная модель, добавляющая поля для отслеживания времени создания и обновления объектов.
+    Абстрактная модель, добавляющая поля для
+    отслеживания времени создания и обновления объектов.
     """
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -19,6 +21,7 @@ class Category(TimeStampedModel):
     Атрибуты:
         name (str): Название категории.
     """
+
     name = models.CharField(max_length=100)
 
     def __str__(self):
@@ -33,8 +36,10 @@ class Good(TimeStampedModel):
         name (str): Название товара.
         price (Decimal): Цена товара.
         category (ForeignKey): Ссылка на категорию товара.
-        exclude_from_promo (bool): Флаг, указывающий, участвует ли товар в промоакциях.
+        exclude_from_promo (bool):  Флаг, указывающий,
+        участвует ли товар в промоакциях.
     """
+
     name = models.CharField(max_length=100)
     price = models.DecimalField(max_digits=10, decimal_places=2)
     category = models.ForeignKey(
